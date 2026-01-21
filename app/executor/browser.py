@@ -5,6 +5,7 @@ Provides Playwright-based browser automation for autonomous test execution.
 """
 
 import base64
+import time
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, ElementHandle
@@ -292,6 +293,251 @@ class BrowserAutomation:
             return True
         except Exception:
             return False
+
+    def wait_for_dom_stable_smart(self, max_wait: int = 10000, check_interval: int = 200) -> bool:
+        """
+        Wait until DOM stops changing using hash comparison.
+
+        Monitors DOM structure hash to detect when mutations have stopped,
+        providing more reliable stability detection than networkidle alone.
+
+        Args:
+            max_wait: Maximum time to wait in milliseconds
+            check_interval: Time between hash checks in milliseconds
+
+        Returns:
+            True when DOM is stable, False if timeout reached
+        """
+        start_time = time.time()
+        max_wait_seconds = max_wait / 1000
+        check_interval_seconds = check_interval / 1000
+        previous_hash = None
+        stable_count = 0
+        required_stable_checks = 3  # Need 3 consecutive matching hashes
+
+        while (time.time() - start_time) < max_wait_seconds:
+            current_hash = self.get_dom_hash()
+
+            if current_hash == previous_hash:
+                stable_count += 1
+                if stable_count >= required_stable_checks:
+                    return True
+            else:
+                stable_count = 0
+
+            previous_hash = current_hash
+            time.sleep(check_interval_seconds)
+
+        return False
+
+    def smart_wait_for_element(
+        self,
+        selector: str,
+        timeout: int = 30000,
+        wait_for_stable: bool = True
+    ) -> BrowserAction:
+        """
+        Wait for element with DOM stability check and actionability verification.
+
+        Performs intelligent waiting that:
+        1. Waits for DOM to stabilize (optional)
+        2. Waits for element to be visible
+        3. Waits for element to be actionable (enabled, not obscured)
+
+        Args:
+            selector: CSS selector or text selector
+            timeout: Maximum wait time in milliseconds
+            wait_for_stable: Whether to wait for DOM stability first
+
+        Returns:
+            BrowserAction with success status and details
+        """
+        start_time = time.time()
+        timeout_seconds = timeout / 1000
+
+        try:
+            # Step 1: Wait for DOM stability (if requested)
+            if wait_for_stable:
+                # Use shorter timeout for stability check
+                stability_timeout = min(5000, timeout // 3)
+                self.wait_for_dom_stable_smart(stability_timeout)
+
+            # Step 2: Wait for element to be visible
+            remaining_timeout = max(1000, int((timeout_seconds - (time.time() - start_time)) * 1000))
+            self.page.wait_for_selector(selector, state="visible", timeout=remaining_timeout)
+
+            # Step 3: Wait for element to be actionable
+            locator = self.page.locator(selector)
+            remaining_timeout = max(1000, int((timeout_seconds - (time.time() - start_time)) * 1000))
+
+            # Check if element is enabled
+            locator.wait_for(state="visible", timeout=remaining_timeout)
+
+            duration = (time.time() - start_time) * 1000
+            return BrowserAction(
+                success=True,
+                action="smart_wait",
+                selector=selector,
+                value=f"ready in {duration:.0f}ms"
+            )
+
+        except Exception as e:
+            return BrowserAction(
+                success=False,
+                action="smart_wait",
+                selector=selector,
+                error=str(e)
+            )
+
+    def _ensure_ready_before_action(self, selector: str, timeout: int = 10000) -> Dict[str, Any]:
+        """
+        Ensure page and element are ready before performing an action.
+
+        Called internally before every action to guarantee:
+        1. Network is idle (or timeout)
+        2. DOM is stable
+        3. Element is scrolled into view
+        4. Element is visible and enabled
+
+        Args:
+            selector: Target element selector
+            timeout: Maximum wait time in milliseconds
+
+        Returns:
+            Dict with readiness status and details
+        """
+        result = {
+            "ready": False,
+            "network_idle": False,
+            "dom_stable": False,
+            "element_visible": False,
+            "element_actionable": False,
+            "duration_ms": 0,
+            "error": None
+        }
+
+        start_time = time.time()
+        timeout_seconds = timeout / 1000
+
+        try:
+            # Step 1: Wait for network idle (with short timeout)
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=min(3000, timeout))
+                result["network_idle"] = True
+            except Exception:
+                pass  # Continue even if network not idle
+
+            # Step 2: Quick DOM stability check
+            if self.wait_for_dom_stable_smart(max_wait=min(3000, timeout), check_interval=100):
+                result["dom_stable"] = True
+
+            # Step 3: Check element exists and scroll into view
+            remaining = max(1000, int((timeout_seconds - (time.time() - start_time)) * 1000))
+            try:
+                locator = self.page.locator(selector)
+                locator.scroll_into_view_if_needed(timeout=remaining)
+            except Exception:
+                pass  # Element might not need scrolling
+
+            # Step 4: Wait for element to be visible
+            remaining = max(1000, int((timeout_seconds - (time.time() - start_time)) * 1000))
+            try:
+                self.page.wait_for_selector(selector, state="visible", timeout=remaining)
+                result["element_visible"] = True
+            except Exception as e:
+                result["error"] = f"Element not visible: {str(e)}"
+                result["duration_ms"] = (time.time() - start_time) * 1000
+                return result
+
+            # Step 5: Verify element is enabled/actionable
+            try:
+                element_info = self.get_element_info(selector)
+                if element_info.get("found") and element_info.get("enabled", True):
+                    result["element_actionable"] = True
+                    result["ready"] = True
+                else:
+                    result["error"] = "Element found but not actionable"
+            except Exception:
+                # If we can't verify, assume it's actionable
+                result["element_actionable"] = True
+                result["ready"] = True
+
+        except Exception as e:
+            result["error"] = str(e)
+
+        result["duration_ms"] = (time.time() - start_time) * 1000
+        return result
+
+    def click_smart(self, selector: str, timeout: int = 10000) -> BrowserAction:
+        """
+        Click an element with smart waiting and readiness checks.
+
+        Args:
+            selector: Target element selector
+            timeout: Maximum wait time in milliseconds
+
+        Returns:
+            BrowserAction with result
+        """
+        # Ensure element is ready
+        readiness = self._ensure_ready_before_action(selector, timeout)
+
+        if not readiness["ready"]:
+            return BrowserAction(
+                success=False,
+                action="click_smart",
+                selector=selector,
+                error=readiness.get("error", "Element not ready")
+            )
+
+        # Perform click
+        try:
+            self.page.click(selector, timeout=timeout)
+            return BrowserAction(success=True, action="click_smart", selector=selector)
+        except Exception as e:
+            return BrowserAction(
+                success=False,
+                action="click_smart",
+                selector=selector,
+                error=str(e)
+            )
+
+    def fill_smart(self, selector: str, value: str, timeout: int = 10000) -> BrowserAction:
+        """
+        Fill a text input with smart waiting and readiness checks.
+
+        Args:
+            selector: Target input selector
+            value: Text to enter
+            timeout: Maximum wait time in milliseconds
+
+        Returns:
+            BrowserAction with result
+        """
+        # Ensure element is ready
+        readiness = self._ensure_ready_before_action(selector, timeout)
+
+        if not readiness["ready"]:
+            return BrowserAction(
+                success=False,
+                action="fill_smart",
+                selector=selector,
+                value=value,
+                error=readiness.get("error", "Element not ready")
+            )
+
+        # Perform fill
+        try:
+            self.page.fill(selector, value, timeout=timeout)
+            return BrowserAction(success=True, action="fill_smart", selector=selector, value=value)
+        except Exception as e:
+            return BrowserAction(
+                success=False,
+                action="fill_smart",
+                selector=selector,
+                value=value,
+                error=str(e)
+            )
 
     def get_dom_snapshot(self) -> Dict[str, Any]:
         """

@@ -12,9 +12,6 @@ Feature: Edit Compliance Record
     Then I should see the compliance record edit form
     And the form fields should be pre-filled with existing data
     And I should click on 'Next' button
-    And I wait for 3 seconds for the page to load
     And I should click on 'Next' button
-    And I wait for 3 seconds for the page to load
     And I should click on 'Next' button
-    And I wait for 3 seconds for the page to load
     And I should click on 'Submit' button

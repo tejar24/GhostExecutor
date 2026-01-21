@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #0d1117;
+  color: #c9d1d9;
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #161b22;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* Gherkin syntax highlighting classes */
+.gherkin-keyword {
+  color: #ff7b72;
+  font-weight: bold;
+}
+
+.gherkin-step {
+  color: #79c0ff;
+}
+
+.gherkin-string {
+  color: #a5d6ff;
+}
+
+.gherkin-comment {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.gherkin-tag {
+  color: #d2a8ff;
+}

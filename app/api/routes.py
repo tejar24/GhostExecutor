@@ -30,8 +30,16 @@ from .schemas import (
     ErrorResponse,
     TestStatus,
 )
+from app.config import get_config
+from .streaming import emit_log_sync, mark_run_started, mark_run_completed
 
 router = APIRouter()
+
+
+def get_api_base_url() -> str:
+    """Get the full API base URL from config."""
+    config = get_config()
+    return f"{config.api.base_url}{config.api.api_prefix}"
 
 # In-memory storage for running tests
 _running_tests: Dict[str, Dict[str, Any]] = {}
@@ -48,15 +56,19 @@ async def health_check():
 @router.get("/info", tags=["System"])
 async def api_info():
     """Get API information."""
+    base_url = get_api_base_url()
     return {
         "name": "Ghost-QC API",
         "version": "1.0.0",
         "description": "Autonomous test execution framework API",
+        "base_url": base_url,
         "endpoints": {
-            "tests": "/api/v1/tests",
-            "features": "/api/v1/features",
-            "generate": "/api/v1/generate",
-            "results": "/api/v1/results",
+            "health": f"{base_url}/health",
+            "tests": f"{base_url}/tests",
+            "features": f"{base_url}/features",
+            "generate": f"{base_url}/generate",
+            "results": f"{base_url}/results",
+            "brain": f"{base_url}/brain",
         },
     }
 
@@ -93,11 +105,12 @@ async def run_tests(
     # Start test execution in background
     background_tasks.add_task(_execute_tests, run_id, request)
 
+    base_url = get_api_base_url()
     return TestRunResponse(
         run_id=run_id,
         status="started",
         message="Test run initiated",
-        results_url=f"/api/v1/tests/{run_id}",
+        results_url=f"{base_url}/tests/{run_id}",
     )
 
 
@@ -105,6 +118,7 @@ async def _execute_tests(run_id: str, request: TestRunRequest):
     """Execute tests in background."""
     try:
         _running_tests[run_id]["status"] = TestStatus.RUNNING
+        mark_run_started(run_id)
 
         # Import here to avoid circular imports
         from app.executor.runner import AutonomousTestRunner
@@ -131,10 +145,15 @@ async def _execute_tests(run_id: str, request: TestRunRequest):
 
         _running_tests[run_id]["progress"]["total"] = len(feature_files)
 
+        # Create emit callback for step logger
+        def emit_callback(event_type: str, data: dict):
+            emit_log_sync(run_id, event_type, data)
+
         # Run tests
         runner = AutonomousTestRunner(
             headless=request.headless,
             slow_mo=request.slow_mo,
+            emit_callback=emit_callback,
         )
 
         all_results = []
@@ -184,14 +203,17 @@ async def _execute_tests(run_id: str, request: TestRunRequest):
 
         # Determine final status
         all_passed = all(r["status"] == "passed" for r in all_results)
-        _running_tests[run_id]["status"] = (
-            TestStatus.PASSED if all_passed else TestStatus.FAILED
-        )
+        final_status = TestStatus.PASSED if all_passed else TestStatus.FAILED
+        _running_tests[run_id]["status"] = final_status
         _running_tests[run_id]["completed_at"] = datetime.now()
+
+        # Mark run as completed for SSE streaming
+        mark_run_completed(run_id, "passed" if all_passed else "failed")
 
     except Exception as e:
         _running_tests[run_id]["status"] = TestStatus.ERROR
         _running_tests[run_id]["error"] = str(e)
+        mark_run_completed(run_id, "error")
 
 
 @router.get(

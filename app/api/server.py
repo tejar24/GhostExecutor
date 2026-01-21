@@ -15,12 +15,15 @@ from fastapi.staticfiles import StaticFiles
 
 from .routes import router
 from .brain_routes import router as brain_router
+from .streaming import router as streaming_router
+from app.config import get_config
 
 
 def create_app(
     title: str = "Ghost-QC API",
     version: str = "1.0.0",
     cors_origins: Optional[list] = None,
+    api_prefix: Optional[str] = None,
 ) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -29,10 +32,20 @@ def create_app(
         title: API title
         version: API version
         cors_origins: Allowed CORS origins
+        api_prefix: API route prefix (default: /api/v1)
 
     Returns:
         Configured FastAPI application
     """
+    # Get configuration
+    config = get_config()
+
+    # Use provided values or fall back to config
+    if api_prefix is None:
+        api_prefix = config.api.api_prefix
+    if cors_origins is None:
+        cors_origins = config.api.cors_origins
+
     app = FastAPI(
         title=title,
         version=version,
@@ -69,7 +82,7 @@ Autonomous test execution framework powered by AI with UI Brain integration.
     )
 
     # Add CORS middleware
-    origins = cors_origins or ["*"]
+    origins = cors_origins if cors_origins else ["*"]
 
     app.add_middleware(
         CORSMiddleware,
@@ -79,26 +92,45 @@ Autonomous test execution framework powered by AI with UI Brain integration.
         allow_headers=["*"],
     )
 
-    # Include API routes
-    app.include_router(router, prefix="/api/v1")
-    app.include_router(brain_router, prefix="/api/v1")
+    # Include API routes with configurable prefix
+    app.include_router(router, prefix=api_prefix)
+    app.include_router(brain_router, prefix=api_prefix)
+    app.include_router(streaming_router, prefix=api_prefix)
 
-    # Serve frontend
+    # Serve frontend - check for built frontend in dist/ or fallback to dev
+    frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
     frontend_dir = Path(__file__).parent.parent.parent / "frontend"
-    if frontend_dir.exists():
+
+    if frontend_dist.exists():
+        # Serve production build assets
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+    elif frontend_dir.exists():
         app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
 
     # Root endpoint - serve frontend
     @app.get("/", tags=["System"])
     async def root():
+        # Check for production build first
+        frontend_dist_file = Path(__file__).parent.parent.parent / "frontend" / "dist" / "index.html"
+        if frontend_dist_file.exists():
+            return FileResponse(str(frontend_dist_file))
+        # Fallback to dev
         frontend_file = Path(__file__).parent.parent.parent / "frontend" / "index.html"
         if frontend_file.exists():
             return FileResponse(str(frontend_file))
         return {
             "name": "Ghost-QC API",
             "version": version,
+            "base_url": config.api.base_url,
             "docs": "/docs",
-            "health": "/api/v1/health",
+            "health": f"{api_prefix}/health",
+            "endpoints": {
+                "health": f"{config.api.base_url}{api_prefix}/health",
+                "tests": f"{config.api.base_url}{api_prefix}/tests",
+                "features": f"{config.api.base_url}{api_prefix}/features",
+                "generate": f"{config.api.base_url}{api_prefix}/generate",
+                "brain": f"{config.api.base_url}{api_prefix}/brain",
+            }
         }
 
     # Global exception handler
@@ -116,18 +148,18 @@ Autonomous test execution framework powered by AI with UI Brain integration.
 
 
 def run_server(
-    host: str = "0.0.0.0",
-    port: int = 8000,
-    reload: bool = False,
-    workers: int = 1,
+    host: str = None,
+    port: int = None,
+    reload: bool = None,
+    workers: int = None,
     log_level: str = "info",
 ):
     """
     Run the API server.
 
     Args:
-        host: Host to bind to
-        port: Port to listen on
+        host: Host to bind to (default: from config)
+        port: Port to listen on (default: from config)
         reload: Enable auto-reload (development)
         workers: Number of worker processes
         log_level: Logging level
@@ -139,12 +171,25 @@ def run_server(
         print("Install it with: pip install uvicorn")
         return
 
+    # Get config for defaults
+    config = get_config()
+
+    # Use provided values or fall back to config
+    server_host = host if host is not None else config.api.host
+    server_port = port if port is not None else config.api.port
+    server_reload = reload if reload is not None else config.api.reload
+    server_workers = workers if workers is not None else config.api.workers
+
+    print(f"Starting Ghost-QC API server at http://{server_host}:{server_port}")
+    print(f"API endpoints available at: http://{server_host}:{server_port}{config.api.api_prefix}/")
+    print(f"Health check: http://{server_host}:{server_port}{config.api.api_prefix}/health")
+
     uvicorn.run(
         "app.api.server:create_app",
-        host=host,
-        port=port,
-        reload=reload,
-        workers=workers,
+        host=server_host,
+        port=server_port,
+        reload=server_reload,
+        workers=server_workers,
         log_level=log_level,
         factory=True,
     )

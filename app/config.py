@@ -11,6 +11,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import json
 
+# Load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    # Look for .env file in project root
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass  # python-dotenv not installed, use OS environment only
+
 
 def _get_env(key: str, default: Any = None, cast: type = str) -> Any:
     """Get environment variable with type casting."""
@@ -100,9 +110,14 @@ class APIConfig:
     port: int = 8000
     workers: int = 1
     reload: bool = False
+    base_url: str = "http://192.168.0.31:8000"  # Base URL for API
+    api_prefix: str = "/api/v1"  # API route prefix
     cors_origins: List[str] = field(default_factory=lambda: [
         "http://localhost:3000",
         "http://localhost:8000",
+        "http://192.168.0.31:8000",
+        "http://192.168.0.31:3000",
+        "*",  # Allow all origins for development
     ])
 
     @classmethod
@@ -116,7 +131,15 @@ class APIConfig:
             port=_get_env("GHOST_QC_API_PORT", 8000, int),
             workers=_get_env("GHOST_QC_API_WORKERS", 1, int),
             reload=_get_env("GHOST_QC_API_RELOAD", False, bool),
-            cors_origins=origins or ["http://localhost:3000", "http://localhost:8000"],
+            base_url=_get_env("GHOST_QC_API_BASE_URL", "http://192.168.0.31:8000"),
+            api_prefix=_get_env("GHOST_QC_API_PREFIX", "/api/v1"),
+            cors_origins=origins or [
+                "http://localhost:3000",
+                "http://localhost:8000",
+                "http://192.168.0.31:8000",
+                "http://192.168.0.31:3000",
+                "*",
+            ],
         )
 
 
@@ -233,6 +256,8 @@ class Config:
                 "port": self.api.port,
                 "workers": self.api.workers,
                 "reload": self.api.reload,
+                "base_url": self.api.base_url,
+                "api_prefix": self.api.api_prefix,
                 "cors_origins": self.api.cors_origins,
             },
             "logging": {
@@ -371,7 +396,9 @@ GHOST_QC_API_HOST=0.0.0.0
 GHOST_QC_API_PORT=8000
 GHOST_QC_API_WORKERS=1
 GHOST_QC_API_RELOAD=false
-GHOST_QC_CORS_ORIGINS=http://localhost:3000,http://localhost:8000
+GHOST_QC_API_BASE_URL=http://192.168.0.31:8000
+GHOST_QC_API_PREFIX=/api/v1
+GHOST_QC_CORS_ORIGINS=http://localhost:3000,http://localhost:8000,http://192.168.0.31:8000
 
 # Logging Settings
 GHOST_QC_LOG_LEVEL=INFO

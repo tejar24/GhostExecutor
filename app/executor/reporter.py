@@ -9,7 +9,11 @@ import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.executor.soft_assertions import SoftAssertionCollector
+    from app.executor.step_logger import StepLogger
 
 
 @dataclass
@@ -71,28 +75,42 @@ class TestReporter:
         self.screenshots_dir = self.output_dir / "screenshots"
         self.screenshots_dir.mkdir(exist_ok=True)
 
-    def generate_report(self, result: TestRunResult, report_name: str = "test_report") -> Dict[str, str]:
+    def generate_report(
+        self,
+        result: TestRunResult,
+        report_name: str = "test_report",
+        soft_assertions: Optional["SoftAssertionCollector"] = None,
+        step_logger: Optional["StepLogger"] = None
+    ) -> Dict[str, str]:
         """
         Generate reports in multiple formats.
-        Returns dict of format -> file path.
+
+        Args:
+            result: Test run result data
+            report_name: Base name for report files
+            soft_assertions: Optional soft assertion collector for failure details
+            step_logger: Optional step logger for detailed logs
+
+        Returns:
+            Dict of format -> file path
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"{report_name}_{timestamp}"
 
         reports = {}
 
-        # JSON report
+        # JSON report (with soft assertions and healing stats)
         json_path = self.output_dir / f"{base_name}.json"
-        self._write_json_report(result, json_path)
+        self._write_json_report(result, json_path, soft_assertions, step_logger)
         reports["json"] = str(json_path)
 
-        # HTML report
+        # HTML report (with soft assertions and healing stats)
         html_path = self.output_dir / f"{base_name}.html"
-        self._write_html_report(result, html_path)
+        self._write_html_report(result, html_path, soft_assertions, step_logger)
         reports["html"] = str(html_path)
 
-        # Console summary
-        self._print_console_summary(result)
+        # Console summary (with soft assertion info)
+        self._print_console_summary(result, soft_assertions, step_logger)
 
         return reports
 
@@ -111,8 +129,14 @@ class TestReporter:
 
         return str(filepath)
 
-    def _write_json_report(self, result: TestRunResult, path: Path) -> None:
-        """Write JSON report."""
+    def _write_json_report(
+        self,
+        result: TestRunResult,
+        path: Path,
+        soft_assertions: Optional["SoftAssertionCollector"] = None,
+        step_logger: Optional["StepLogger"] = None
+    ) -> None:
+        """Write JSON report with soft assertions and healing stats."""
         # Convert to dict, handling nested dataclasses
         def to_dict(obj):
             if hasattr(obj, "__dataclass_fields__"):
@@ -124,14 +148,34 @@ class TestReporter:
             return obj
 
         report_dict = to_dict(result)
+
+        # Add soft assertion summary if available
+        if soft_assertions:
+            report_dict["soft_assertions"] = soft_assertions.get_summary()
+
+        # Add healing statistics if available
+        if step_logger:
+            report_dict["healing_statistics"] = step_logger.get_healing_statistics()
+
         path.write_text(json.dumps(report_dict, indent=2), encoding="utf-8")
 
-    def _write_html_report(self, result: TestRunResult, path: Path) -> None:
-        """Write HTML report."""
-        html = self._generate_html(result)
+    def _write_html_report(
+        self,
+        result: TestRunResult,
+        path: Path,
+        soft_assertions: Optional["SoftAssertionCollector"] = None,
+        step_logger: Optional["StepLogger"] = None
+    ) -> None:
+        """Write HTML report with soft assertions and healing stats."""
+        html = self._generate_html(result, soft_assertions, step_logger)
         path.write_text(html, encoding="utf-8")
 
-    def _generate_html(self, result: TestRunResult) -> str:
+    def _generate_html(
+        self,
+        result: TestRunResult,
+        soft_assertions: Optional["SoftAssertionCollector"] = None,
+        step_logger: Optional["StepLogger"] = None
+    ) -> str:
         """Generate HTML report content."""
         pass_rate = (result.passed_scenarios / result.total_scenarios * 100) if result.total_scenarios > 0 else 0
 
@@ -168,6 +212,58 @@ class TestReporter:
 
                 scenarios_html += '</div></div>'
             scenarios_html += '</div>'
+
+        # Generate soft assertion failures section
+        soft_assertions_html = ""
+        if soft_assertions and soft_assertions.has_failures():
+            failures_html = ""
+            for failure in soft_assertions.failures:
+                failures_html += f'''
+                <div class="assertion-failure">
+                    <div class="assertion-type">{self._escape_html(failure.assertion_type.upper())}</div>
+                    <div class="assertion-step">Step: {self._escape_html(failure.step_text)}</div>
+                    <div class="assertion-message">{self._escape_html(failure.message)}</div>
+                    <div class="assertion-details">
+                        Expected: {self._escape_html(str(failure.expected))} |
+                        Actual: {self._escape_html(str(failure.actual))}
+                    </div>
+                </div>
+                '''
+
+            soft_assertions_html = f'''
+            <div class="soft-assertions">
+                <h2>Soft Assertion Failures ({soft_assertions.get_failure_count()})</h2>
+                {failures_html}
+            </div>
+            '''
+
+        # Generate healing statistics section
+        healing_html = ""
+        if step_logger:
+            healing_stats = step_logger.get_healing_statistics()
+            if healing_stats["total_steps_healed"] > 0:
+                methods_html = ""
+                for method, count in healing_stats.get("methods_used", {}).items():
+                    methods_html += f'<span class="heal-method">{method}: {count}</span> '
+
+                healing_html = f'''
+                <div class="healing-stats">
+                    <h2>Auto-Healing Statistics</h2>
+                    <div class="healing-grid">
+                        <div class="heal-item">
+                            <div class="heal-number">{healing_stats["total_steps_healed"]}</div>
+                            <div class="heal-label">Steps Healed</div>
+                        </div>
+                        <div class="heal-item">
+                            <div class="heal-number">{healing_stats["heal_success_rate"]:.1f}%</div>
+                            <div class="heal-label">Success Rate</div>
+                        </div>
+                    </div>
+                    <div class="heal-methods">
+                        <strong>Methods used:</strong> {methods_html}
+                    </div>
+                </div>
+                '''
 
         html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -211,6 +307,25 @@ class TestReporter:
         .screenshot a {{ color: #007bff; }}
         .progress-bar {{ height: 20px; background: #e9ecef; border-radius: 10px; overflow: hidden; margin-top: 10px; }}
         .progress-fill {{ height: 100%; background: linear-gradient(90deg, #28a745, #20c997); transition: width 0.3s; }}
+
+        /* Soft Assertions Styles */
+        .soft-assertions {{ background: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ffc107; }}
+        .soft-assertions h2 {{ color: #856404; margin-bottom: 15px; }}
+        .assertion-failure {{ background: white; padding: 12px; margin: 10px 0; border-radius: 6px; border-left: 3px solid #dc3545; }}
+        .assertion-type {{ font-weight: bold; color: #dc3545; font-size: 0.9em; }}
+        .assertion-step {{ margin-top: 5px; color: #333; }}
+        .assertion-message {{ margin-top: 5px; color: #666; }}
+        .assertion-details {{ margin-top: 5px; font-size: 0.85em; color: #888; }}
+
+        /* Healing Stats Styles */
+        .healing-stats {{ background: #d4edda; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #28a745; }}
+        .healing-stats h2 {{ color: #155724; margin-bottom: 15px; }}
+        .healing-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 15px; }}
+        .heal-item {{ text-align: center; background: white; padding: 15px; border-radius: 6px; }}
+        .heal-number {{ font-size: 1.5em; font-weight: bold; color: #155724; }}
+        .heal-label {{ font-size: 0.85em; color: #666; }}
+        .heal-methods {{ margin-top: 10px; }}
+        .heal-method {{ display: inline-block; background: white; padding: 4px 10px; border-radius: 15px; margin: 2px; font-size: 0.85em; }}
     </style>
 </head>
 <body>
@@ -246,6 +361,10 @@ class TestReporter:
             </p>
         </div>
 
+        {healing_html}
+
+        {soft_assertions_html}
+
         {scenarios_html}
     </div>
 </body>
@@ -262,8 +381,13 @@ class TestReporter:
                 .replace('"', "&quot;")
                 .replace("'", "&#39;"))
 
-    def _print_console_summary(self, result: TestRunResult) -> None:
-        """Print summary to console."""
+    def _print_console_summary(
+        self,
+        result: TestRunResult,
+        soft_assertions: Optional["SoftAssertionCollector"] = None,
+        step_logger: Optional["StepLogger"] = None
+    ) -> None:
+        """Print summary to console with soft assertion and healing info."""
         print("\n" + "=" * 60)
         print("GHOST QC - TEST EXECUTION SUMMARY")
         print("=" * 60)
@@ -277,6 +401,27 @@ class TestReporter:
         if result.total_scenarios > 0:
             pass_rate = result.passed_scenarios / result.total_scenarios * 100
             print(f"Pass Rate: {pass_rate:.1f}%")
+
+        # Print healing statistics if available
+        if step_logger:
+            healing_stats = step_logger.get_healing_statistics()
+            if healing_stats["total_steps_healed"] > 0:
+                print("\n" + "-" * 40)
+                print("AUTO-HEALING STATISTICS:")
+                print(f"  Steps healed: {healing_stats['total_steps_healed']}")
+                print(f"  Success rate: {healing_stats['heal_success_rate']:.1f}%")
+                if healing_stats.get("methods_used"):
+                    methods = ", ".join(f"{k}: {v}" for k, v in healing_stats["methods_used"].items())
+                    print(f"  Methods: {methods}")
+
+        # Print soft assertion summary if available
+        if soft_assertions and soft_assertions.has_failures():
+            print("\n" + "-" * 40)
+            print(f"SOFT ASSERTION FAILURES: {soft_assertions.get_failure_count()}")
+            for failure in soft_assertions.failures[:5]:  # Show first 5
+                print(f"  - [{failure.assertion_type}] {failure.message}")
+            if soft_assertions.get_failure_count() > 5:
+                print(f"  ... and {soft_assertions.get_failure_count() - 5} more")
 
         print("=" * 60)
 
