@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost-QC Test Runner</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { color: #00d9ff; margin-bottom: 20px; }
+        .card { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .card h2 { color: #00d9ff; margin-bottom: 15px; font-size: 18px; }
+        textarea { width: 100%; height: 300px; background: #0f0f23; color: #00ff00; border: 1px solid #333; border-radius: 4px; padding: 15px; font-family: 'Consolas', monospace; font-size: 14px; resize: vertical; }
+        textarea:focus { outline: none; border-color: #00d9ff; }
+        .btn { background: #00d9ff; color: #000; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px; margin-right: 10px; margin-top: 10px; }
+        .btn:hover { background: #00b8d9; }
+        .btn:disabled { background: #555; color: #888; cursor: not-allowed; }
+        .btn-secondary { background: #333; color: #fff; }
+        .btn-secondary:hover { background: #444; }
+        .status { padding: 10px 15px; border-radius: 4px; margin-top: 15px; }
+        .status.running { background: #1e3a5f; border-left: 4px solid #00d9ff; }
+        .status.success { background: #1e3f1e; border-left: 4px solid #00ff00; }
+        .status.error { background: #3f1e1e; border-left: 4px solid #ff4444; }
+        .results { margin-top: 20px; }
+        .step { padding: 8px 12px; margin: 5px 0; border-radius: 4px; font-family: monospace; font-size: 13px; }
+        .step.passed { background: #1e3f1e; border-left: 3px solid #00ff00; }
+        .step.failed { background: #3f1e1e; border-left: 3px solid #ff4444; }
+        .step.pending { background: #333; border-left: 3px solid #888; }
+        .error-msg { color: #ff6b6b; font-size: 12px; margin-top: 5px; }
+        .flex { display: flex; gap: 20px; }
+        .flex > div { flex: 1; }
+        .feature-list { list-style: none; }
+        .feature-list li { padding: 10px; background: #0f0f23; margin: 5px 0; border-radius: 4px; cursor: pointer; }
+        .feature-list li:hover { background: #1e3a5f; }
+        .loader { display: inline-block; width: 20px; height: 20px; border: 2px solid #333; border-top-color: #00d9ff; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .api-status { font-size: 12px; padding: 5px 10px; border-radius: 20px; }
+        .api-status.connected { background: #1e3f1e; color: #00ff00; }
+        .api-status.disconnected { background: #3f1e1e; color: #ff4444; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Ghost-QC Test Runner</h1>
+            <span id="apiStatus" class="api-status disconnected">API: Checking...</span>
+        </div>
+
+        <div class="flex">
+            <div>
+                <div class="card">
+                    <h2>Feature Editor</h2>
+                    <textarea id="featureContent" placeholder="Write your Gherkin feature here...">Feature: Edit Compliance Record
+
+  Scenario: Navigate to Edit Compliance Record form using pencil icon
+    Given I am on the Fleetlytics login page at https://fleetlytics-test.pages.dev/
+    When I enter "Mg@trucking.com" in the email input field
+    And I enter "Welcome2eox!" in the password input field
+    And I click the Sign In button
+    And I wait for 3 seconds for the page to load
+    Then I should see the Home page
+    Then I should click on Compliance tile
+    When I click on the Edit pencil icon button for the first row in the compliance records table
+    Then I should see the compliance record edit form
+    And the form fields should be pre-filled with existing data
+    And I should click on 'Next' button
+    And I wait for 3 seconds for the page to load
+    And I should click on 'Next' button
+    And I wait for 3 seconds for the page to load
+    And I should click on 'Next' button
+    And I wait for 3 seconds for the page to load
+    And I should click on 'Submit' button</textarea>
+                    <div>
+                        <button class="btn" onclick="runTest()">Run Test</button>
+                        <button class="btn btn-secondary" onclick="saveFeature()">Save Feature</button>
+                        <button class="btn btn-secondary" onclick="reloadFeature()">Reload File</button>
+                        <label style="display: inline-flex; align-items: center; margin-left: 15px; cursor: pointer;">
+                            <input type="checkbox" id="headedMode" checked style="margin-right: 5px;">
+                            Headed Mode (Show Browser)
+                        </label>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Execution Status</h2>
+                    <div id="statusArea">
+                        <p style="color: #888;">Click "Run Test" to start execution</p>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="card">
+                    <h2>Test Results</h2>
+                    <div id="resultsArea">
+                        <p style="color: #888;">Results will appear here after test execution</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Saved Features</h2>
+                    <ul id="featureList" class="feature-list">
+                        <li style="color: #888;">Click "Load Features" to see available feature files</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+        let currentRunId = null;
+        let pollInterval = null;
+
+        // Check API status on load
+        async function checkApiStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/health`);
+                if (res.ok) {
+                    document.getElementById('apiStatus').textContent = 'API: Connected';
+                    document.getElementById('apiStatus').className = 'api-status connected';
+                } else {
+                    throw new Error('API not responding');
+                }
+            } catch (e) {
+                document.getElementById('apiStatus').textContent = 'API: Disconnected';
+                document.getElementById('apiStatus').className = 'api-status disconnected';
+            }
+        }
+
+        // Run test
+        async function runTest() {
+            const content = document.getElementById('featureContent').value;
+            const headed = !document.getElementById('headedMode').checked;
+
+            if (!content.trim()) {
+                alert('Please enter a feature to test');
+                return;
+            }
+
+            // Save feature first
+            try {
+                await fetch(`${API_BASE}/features/save-temp`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: content })
+                });
+            } catch (e) {
+                // Fallback: save via direct file endpoint
+            }
+
+            document.getElementById('statusArea').innerHTML = `
+                <div class="status running">
+                    <span class="loader"></span>
+                    Starting test execution...
+                </div>
+            `;
+            document.getElementById('resultsArea').innerHTML = '<p style="color: #888;">Running tests...</p>';
+
+            try {
+                const res = await fetch(`${API_BASE}/tests/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        feature_files: ['features/edit_compliance_single.feature'],
+                        headless: headed,
+                        stop_on_failure: false
+                    })
+                });
+
+                if (!res.ok) throw new Error('Failed to start test');
+
+                const data = await res.json();
+                currentRunId = data.run_id;
+
+                // Poll for status
+                pollInterval = setInterval(pollStatus, 2000);
+
+            } catch (e) {
+                document.getElementById('statusArea').innerHTML = `
+                    <div class="status error">
+                        Error: ${e.message}. Make sure the API server is running (python -m app.api.server)
+                    </div>
+                `;
+            }
+        }
+
+        // Poll test status
+        async function pollStatus() {
+            if (!currentRunId) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/tests/${currentRunId}`);
+                const data = await res.json();
+
+                updateStatus(data);
+
+                if (data.status !== 'pending' && data.status !== 'running') {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                }
+            } catch (e) {
+                console.error('Poll error:', e);
+            }
+        }
+
+        // Update UI with status
+        function updateStatus(data) {
+            const statusClass = data.status === 'passed' ? 'success' :
+                               (data.status === 'failed' || data.status === 'error') ? 'error' : 'running';
+
+            const progress = data.progress || { completed: 0, total: 0, passed: 0, failed: 0 };
+
+            document.getElementById('statusArea').innerHTML = `
+                <div class="status ${statusClass}">
+                    ${data.status === 'running' || data.status === 'pending' ? '<span class="loader"></span>' : ''}
+                    <strong>Status:</strong> ${data.status.toUpperCase()}<br>
+                    <strong>Progress:</strong> ${progress.completed}/${progress.total} features<br>
+                    <strong>Passed:</strong> ${progress.passed} | <strong>Failed:</strong> ${progress.failed}
+                    ${data.current_scenario ? `<br><strong>Current:</strong> ${data.current_scenario}` : ''}
+                    ${data.error ? `<br><br><strong>Error:</strong> <span style="color:#ff6b6b">${data.error}</span>` : ''}
+                </div>
+            `;
+
+            // Update results
+            if (data.results && data.results.length > 0) {
+                let html = '';
+                data.results.forEach(result => {
+                    if (result.scenarios) {
+                        result.scenarios.forEach(scenario => {
+                            html += `<h3 style="margin: 15px 0 10px; color: #00d9ff;">${scenario.name}</h3>`;
+                            if (scenario.steps) {
+                                scenario.steps.forEach(step => {
+                                    html += `
+                                        <div class="step ${step.status}">
+                                            <strong>${step.keyword}</strong> ${step.step_text}
+                                            ${step.error ? `<div class="error-msg">${step.error}</div>` : ''}
+                                        </div>
+                                    `;
+                                });
+                            }
+                        });
+                    }
+                });
+                document.getElementById('resultsArea').innerHTML = html || '<p>No detailed results available</p>';
+            }
+        }
+
+        // Load features
+        async function loadFeatures() {
+            try {
+                const res = await fetch(`${API_BASE}/features`);
+                const data = await res.json();
+
+                let html = '';
+                if (data.features && data.features.length > 0) {
+                    data.features.forEach(f => {
+                        html += `<li onclick="loadFeature('${f.file_path}')">${f.name}</li>`;
+                    });
+                } else {
+                    html = '<li style="color: #888;">No features found</li>';
+                }
+                document.getElementById('featureList').innerHTML = html;
+            } catch (e) {
+                document.getElementById('featureList').innerHTML = `
+                    <li style="color: #ff6b6b;">Error loading features. Is the API running?</li>
+                `;
+            }
+        }
+
+        // Load specific feature
+        async function loadFeature(filePath) {
+            try {
+                const res = await fetch(`${API_BASE}/features/${encodeURIComponent(filePath)}`);
+                const data = await res.json();
+                document.getElementById('featureContent').value = data.content || '';
+            } catch (e) {
+                alert('Error loading feature: ' + e.message);
+            }
+        }
+
+        // Save feature
+        async function saveFeature() {
+            const content = document.getElementById('featureContent').value;
+            const filename = prompt('Enter filename (e.g., my_test.feature):', 'edit_compliance_single.feature');
+
+            if (!filename) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/features/save`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: filename,
+                        content: content
+                    })
+                });
+
+                if (res.ok) {
+                    alert('Feature saved successfully!');
+                    loadFeatures();
+                } else {
+                    throw new Error('Save failed');
+                }
+            } catch (e) {
+                alert('Error saving feature. Make sure API is running.');
+            }
+        }
+
+        // Reload feature file from server
+        async function reloadFeature() {
+            try {
+                const res = await fetch(`${API_BASE}/features/read/edit_compliance_single.feature`);
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('featureContent').value = data.content;
+                    alert('Feature file reloaded!');
+                } else {
+                    throw new Error('Failed to load');
+                }
+            } catch (e) {
+                alert('Error loading feature file: ' + e.message);
+            }
+        }
+
+        // Initialize
+        checkApiStatus();
+        setInterval(checkApiStatus, 10000);
+    </script>
+</body>
+</html>

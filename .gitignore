@@ -1,0 +1,76 @@
+# ===============================
+# Claude CLI / MCP runtime
+# ===============================
+.claude/
+claude-*-cwd/
+
+# ===============================
+# Logs & generated outputs
+# ===============================
+*_output.txt
+*_error.txt
+error.txt
+test_error.txt
+generation_error.txt
+scenario*_output.txt
+compliance_test_output*
+reports/
+
+# ===============================
+# Databases / temp files
+# ===============================
+*.db
+*.sqlite
+*.sqlite3
+
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# ===============================
+# Playwright
+# ===============================
+playwright-report/
+test-results/
+blob-report/
+
+# ===============================
+# Node / frontend
+# ===============================
+node_modules/
+dist/
+build/
+.cache/
+
+# ===============================
+# IDE / Editors
+# ===============================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===============================
+# OS / Windows
+# ===============================
+nul
+Thumbs.db
+desktop.ini
+
+# ===============================
+# OS / macOS
+# ===============================
+.DS_Store
+
+# ===============================
+# Git safety
+# ===============================
+*.orig
+*.rej

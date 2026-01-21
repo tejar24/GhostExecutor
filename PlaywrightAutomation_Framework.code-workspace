@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "D:/Automation/PlaywrightAutomation_Framework"
+		},
+		{
+			"path": "D:/Automation/Autonomous Project/ghostQA-V2"
+		},
+		{
+			"path": "D:/Playwright_Homepage_Screenshotcomparator"
+		},
+		{
+			"path": "../test-automation-framework"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}
