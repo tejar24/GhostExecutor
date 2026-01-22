@@ -134,3 +134,52 @@ export interface HealthResponse {
   status: string;
   timestamp: string;
 }
+
+// Remote Execution Types
+export type ClientStatus = 'connected' | 'busy' | 'disconnected';
+
+export interface RemoteClient {
+  session_id: string;
+  client_name: string;
+  status: ClientStatus;
+  connected_at: string;
+  last_heartbeat: string;
+  browser_running: boolean;
+}
+
+export interface RemoteClientListResponse {
+  clients: RemoteClient[];
+  total: number;
+}
+
+export interface RemoteRunRequest {
+  session_id: string;
+  feature_content: string;
+  headless?: boolean;
+  slow_mo?: number;
+}
+
+export interface RemoteRunResponse {
+  run_id: string;
+  session_id: string;
+  status: string;
+  message: string;
+}
+
+export interface RemoteRunStatus {
+  session_id: string;
+  status: string;
+  result?: {
+    run_id: string;
+    status: string;
+    total_scenarios: number;
+    passed_scenarios: number;
+    failed_scenarios: number;
+    duration_ms: number;
+    errors?: string[];
+  };
+  last_event?: {
+    event: string;
+    data: Record<string, unknown>;
+  };
+}
