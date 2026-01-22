@@ -67,7 +67,7 @@ class AIConfig:
     model: str = "claude-3-sonnet"
     temperature: float = 0.7
     api_key: Optional[str] = None
-    use_cli: bool = True  # Use Claude CLI vs API
+    use_cli: bool = False  # Use Claude API by default (CLI not available on remote servers)
 
     @classmethod
     def from_env(cls) -> "AIConfig":
@@ -78,7 +78,7 @@ class AIConfig:
             model=_get_env("GHOST_QC_AI_MODEL", "claude-3-sonnet"),
             temperature=_get_env("GHOST_QC_AI_TEMPERATURE", 0.7, float),
             api_key=_get_env("ANTHROPIC_API_KEY"),
-            use_cli=_get_env("GHOST_QC_USE_CLI", True, bool),
+            use_cli=_get_env("GHOST_QC_USE_CLI", False, bool),
         )
 
 
@@ -381,7 +381,7 @@ GHOST_QC_AI_TIMEOUT=120
 GHOST_QC_AI_RETRIES=3
 GHOST_QC_AI_MODEL=claude-3-sonnet
 GHOST_QC_AI_TEMPERATURE=0.7
-GHOST_QC_USE_CLI=true
+GHOST_QC_USE_CLI=false
 ANTHROPIC_API_KEY=your-api-key-here
 
 # Storage Settings
