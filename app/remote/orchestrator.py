@@ -6,6 +6,7 @@ Provides RemoteBrowserProxy to communicate with client browsers via WebSocket.
 """
 
 import asyncio
+import json
 import time
 import uuid
 from datetime import datetime
@@ -560,7 +561,6 @@ class RemoteTestOrchestrator:
 
     async def _interpret_step(self, step_text: str, page_state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Interpret step using AI to determine action."""
-        import json
         import re
         from app.ai.engine import run_ai
 
@@ -650,7 +650,6 @@ Respond with ONLY the JSON object, no explanations.'''
 
     def _parse_json_response(self, response: str) -> Optional[Dict[str, Any]]:
         """Parse JSON from AI response."""
-        import json
         import re
 
         # Try direct parse
