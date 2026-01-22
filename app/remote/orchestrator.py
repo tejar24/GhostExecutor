@@ -328,23 +328,39 @@ class RemoteTestOrchestrator:
 
         self._emit("run_started", {"run_id": run_id, "session_id": self.session_id})
 
+        print(f"[Remote Orchestrator] Starting test run: {run_id}")
+        print(f"[Remote Orchestrator] Feature content length: {len(feature_content)}")
+
         try:
             # Parse feature content
             parser = GherkinParser()
             feature = parser.parse_content(feature_content)
 
+            print(f"[Remote Orchestrator] Parsed feature: {feature.name}")
+            print(f"[Remote Orchestrator] Scenarios: {len(feature.scenarios)}")
+
+            if not feature.scenarios:
+                result["status"] = "error"
+                result["errors"].append("No scenarios found in feature content")
+                print("[Remote Orchestrator] ERROR: No scenarios found!")
+                return result
+
             # Start browser on client
             self._emit("browser_starting", {"run_id": run_id})
+            print("[Remote Orchestrator] Starting browser on client...")
             browser_started = await self._browser_proxy.start(headless, slow_mo)
 
             if not browser_started:
                 result["status"] = "error"
                 result["errors"].append("Failed to start browser on client")
+                print("[Remote Orchestrator] ERROR: Failed to start browser!")
                 return result
 
             self._emit("browser_started", {"run_id": run_id})
+            print("[Remote Orchestrator] Browser started successfully")
 
             # Run feature
+            print(f"[Remote Orchestrator] Running feature: {feature.name}")
             feature_result = await self._run_feature(feature, run_id)
             result["features"].append(feature_result)
 
@@ -467,20 +483,28 @@ class RemoteTestOrchestrator:
             "step": full_step,
         })
 
+        print(f"[Remote Orchestrator] Executing step: {full_step}")
         start_time = time.time()
 
         try:
             # Get fresh page state from client
+            print("[Remote Orchestrator] Requesting page state...")
             page_state = await self._browser_proxy.refresh_page_state()
+            print(f"[Remote Orchestrator] Page state URL: {page_state.get('url', 'N/A')}")
 
             # Interpret step using AI (server-side)
+            print("[Remote Orchestrator] Interpreting step with AI...")
             action = await self._interpret_step(full_step, page_state)
+            print(f"[Remote Orchestrator] AI action: {action}")
 
             if not action:
+                print("[Remote Orchestrator] ERROR: Failed to interpret step")
                 return self._step_failure(step, "Failed to interpret step", start_time, run_id)
 
             # Execute action on remote client
+            print(f"[Remote Orchestrator] Executing action: {action.get('action')}")
             result = await self._execute_action(action)
+            print(f"[Remote Orchestrator] Action result: success={result.get('success')}")
 
             if result.get("success"):
                 duration_ms = (time.time() - start_time) * 1000
@@ -490,6 +514,7 @@ class RemoteTestOrchestrator:
                     "status": "passed",
                     "duration_ms": duration_ms,
                 })
+                print(f"[Remote Orchestrator] Step PASSED in {duration_ms:.0f}ms")
                 return {
                     "keyword": step.keyword,
                     "text": step.text,
@@ -498,11 +523,15 @@ class RemoteTestOrchestrator:
                     "action": action,
                 }
             else:
+                print(f"[Remote Orchestrator] Step FAILED: {result.get('error')}")
                 return self._step_failure(
                     step, result.get("error", "Action failed"), start_time, run_id, action
                 )
 
         except Exception as e:
+            print(f"[Remote Orchestrator] Step EXCEPTION: {e}")
+            import traceback
+            traceback.print_exc()
             return self._step_failure(step, str(e), start_time, run_id)
 
     def _step_failure(

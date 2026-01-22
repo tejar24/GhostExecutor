@@ -237,6 +237,11 @@ async def _execute_remote_test(
     """Background task to execute test on remote client."""
     session_manager = get_session_manager()
 
+    print(f"[Remote Routes] Starting remote test execution")
+    print(f"[Remote Routes] Run ID: {run_id}")
+    print(f"[Remote Routes] Session ID: {session_id}")
+    print(f"[Remote Routes] Feature content:\n{feature_content[:500]}...")
+
     try:
         # Create orchestrator
         orchestrator = RemoteTestOrchestrator(
@@ -254,11 +259,16 @@ async def _execute_remote_test(
             slow_mo=slow_mo,
         )
 
+        print(f"[Remote Routes] Test completed with status: {result.get('status')}")
+
         # Store result
         _running_tests[run_id]["status"] = result.get("status", "completed")
         _running_tests[run_id]["result"] = result
 
     except Exception as e:
+        print(f"[Remote Routes] Test execution error: {e}")
+        import traceback
+        traceback.print_exc()
         _running_tests[run_id]["status"] = "error"
         _running_tests[run_id]["result"] = {"error": str(e)}
 

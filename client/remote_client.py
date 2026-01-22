@@ -180,6 +180,8 @@ class RemoteClient:
         message_type = data.get("type")
         request_id = data.get("request_id")
 
+        print(f"[Client] Received message: {message_type} (request_id: {request_id})")
+
         if message_type == "heartbeat_ack":
             # Server acknowledged heartbeat
             return
@@ -201,7 +203,7 @@ class RemoteClient:
             await self._send_result(request_id, result)
 
         else:
-            print(f"Unknown message type: {message_type}")
+            print(f"[Client] Unknown message type: {message_type}")
 
     async def _handle_start_browser(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Handle start_browser command."""
