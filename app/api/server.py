@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from .routes import router
 from .brain_routes import router as brain_router
 from .streaming import router as streaming_router
+from app.remote.routes import router as remote_router
 from app.config import get_config
 
 
@@ -96,6 +97,7 @@ Autonomous test execution framework powered by AI with UI Brain integration.
     app.include_router(router, prefix=api_prefix)
     app.include_router(brain_router, prefix=api_prefix)
     app.include_router(streaming_router, prefix=api_prefix)
+    app.include_router(remote_router, prefix=api_prefix)
 
     # Serve frontend - check for built frontend in dist/ or fallback to dev
     frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
