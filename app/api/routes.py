@@ -44,6 +44,9 @@ def get_api_base_url() -> str:
 # In-memory storage for running tests
 _running_tests: Dict[str, Dict[str, Any]] = {}
 
+# Store runner instances for cancellation
+_active_runners: Dict[str, Any] = {}
+
 
 # Health & Info
 
@@ -156,8 +159,15 @@ async def _execute_tests(run_id: str, request: TestRunRequest):
             emit_callback=emit_callback,
         )
 
+        # Store runner for cancellation
+        _active_runners[run_id] = runner
+
         all_results = []
         for feature_file in feature_files:
+            # Check if cancelled before running next feature
+            if runner.is_cancelled():
+                break
+
             _running_tests[run_id]["current_scenario"] = str(feature_file)
 
             # Run the feature file
@@ -165,6 +175,10 @@ async def _execute_tests(run_id: str, request: TestRunRequest):
                 runner.run_feature_file,
                 str(feature_file),
             )
+
+            # Check if cancelled during execution
+            if runner.is_cancelled():
+                break
 
             # Convert result to dict for JSON serialization
             result_dict = {
@@ -210,10 +224,15 @@ async def _execute_tests(run_id: str, request: TestRunRequest):
         # Mark run as completed for SSE streaming
         mark_run_completed(run_id, "passed" if all_passed else "failed")
 
+        # Cleanup runner reference
+        _active_runners.pop(run_id, None)
+
     except Exception as e:
         _running_tests[run_id]["status"] = TestStatus.ERROR
         _running_tests[run_id]["error"] = str(e)
         mark_run_completed(run_id, "error")
+        # Cleanup runner reference
+        _active_runners.pop(run_id, None)
 
 
 @router.get(
@@ -248,11 +267,25 @@ async def cancel_test_run(run_id: str):
     if run_id not in _running_tests:
         raise HTTPException(status_code=404, detail="Test run not found")
 
-    # Mark as cancelled (actual cancellation would need more complex handling)
+    # Actually cancel the running test
+    runner = _active_runners.get(run_id)
+    if runner:
+        try:
+            runner.cancel()
+        except Exception as e:
+            print(f"Error cancelling runner: {e}")
+        finally:
+            _active_runners.pop(run_id, None)
+
+    # Mark as cancelled
     _running_tests[run_id]["status"] = TestStatus.SKIPPED
     _running_tests[run_id]["error"] = "Cancelled by user"
+    _running_tests[run_id]["completed_at"] = datetime.now()
 
-    return {"message": "Test run cancellation requested"}
+    # Mark run as completed for SSE streaming
+    mark_run_completed(run_id, "cancelled")
+
+    return {"message": "Test run cancelled successfully"}
 
 
 # Feature Generation

@@ -5,7 +5,7 @@ client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 def run_claude_api(prompt: str) -> str:
     response = client.messages.create(
-        model="claude-3-5-sonnet-latest",
+        model="claude-sonnet-4-5",
         max_tokens=4000,
         messages=[{"role": "user", "content": prompt}]
     )

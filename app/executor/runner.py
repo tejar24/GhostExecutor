@@ -78,6 +78,19 @@ class AutonomousTestRunner:
         )
         self._step_logger.set_verbose(enable_detailed_logging)
 
+        # Cancellation flag
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Cancel the running test execution."""
+        self._cancelled = True
+        # Force stop browser immediately
+        self._stop_browser()
+
+    def is_cancelled(self) -> bool:
+        """Check if test execution was cancelled."""
+        return self._cancelled
+
     def run_feature_file(self, file_path: str) -> TestRunResult:
         """
         Run all scenarios in a feature file.
@@ -114,6 +127,8 @@ class AutonomousTestRunner:
 
             # Run each feature file
             for file_path in file_paths:
+                if self._cancelled:
+                    break
                 feature_result = self._run_feature(file_path)
                 result.features.append(feature_result)
 
@@ -228,7 +243,7 @@ class AutonomousTestRunner:
         abort = False
 
         for scenario in feature.scenarios:
-            if abort:
+            if abort or self._cancelled:
                 # Skip remaining scenarios
                 scenario_result = ScenarioResult(
                     name=scenario.name,
@@ -289,6 +304,16 @@ class AutonomousTestRunner:
         has_failures = False
 
         for step in scenario.steps:
+            # Check for cancellation
+            if self._cancelled:
+                step_result = StepResult(
+                    step_text=step.text,
+                    keyword=step.keyword,
+                    status="skipped"
+                )
+                result.steps.append(step_result)
+                continue
+
             # Determine if we should skip
             should_skip = skip_remaining and not self.use_soft_assertions
 

@@ -44,12 +44,15 @@ export function useTestExecution(): UseTestExecutionReturn {
     setError(null);
     setStatus(null);
 
+    // Generate a unique temp filename for this test run
+    const tempFilename = `temp_test_${Date.now()}.feature`;
+
     // First, save the feature content to a temp file
     try {
-      const saveRes = await fetch(`${API_BASE}/features/save-temp`, {
+      const saveRes = await fetch(`${API_BASE}/features/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ filename: tempFilename, content }),
       });
 
       if (!saveRes.ok) {
@@ -60,13 +63,13 @@ export function useTestExecution(): UseTestExecutionReturn {
       return;
     }
 
-    // Now start the test
+    // Now start the test with the temp feature file
     try {
       const res = await fetch(`${API_BASE}/tests/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          feature_files: ['features/edit_compliance_single.feature'],
+          feature_files: [`features/${tempFilename}`],
           headless,
           stop_on_failure: false,
         }),
