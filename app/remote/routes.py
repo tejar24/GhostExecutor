@@ -6,9 +6,10 @@ FastAPI routes for remote test execution.
 
 import asyncio
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from sse_starlette.sse import EventSourceResponse
 
 from .schemas import (
     MessageType,
@@ -28,6 +29,9 @@ router = APIRouter(tags=["Remote Execution"])
 
 # Track running tests
 _running_tests: Dict[str, Dict[str, Any]] = {}
+
+# Event queues for SSE streaming
+_event_queues: Dict[str, asyncio.Queue] = {}
 
 
 @router.websocket("/remote/ws")
@@ -209,6 +213,9 @@ async def run_remote_test(
         "result": None,
     }
 
+    # Create event queue for SSE streaming (before test starts)
+    _event_queues[run_id] = asyncio.Queue(maxsize=100)
+
     # Start test execution in background
     background_tasks.add_task(
         _execute_remote_test,
@@ -278,10 +285,76 @@ async def _execute_remote_test(
 
 
 def _emit_test_event(run_id: str, event: str, data: Dict[str, Any]):
-    """Emit test event (can be extended to use SSE)."""
-    # For now, just update the status
+    """Emit test event to SSE stream."""
+    import json
+    from datetime import datetime
+
+    # Update status
     if run_id in _running_tests:
         _running_tests[run_id]["last_event"] = {"event": event, "data": data}
+
+    # Push to SSE queue if exists
+    if run_id in _event_queues:
+        event_data = {
+            "type": event,
+            "timestamp": datetime.now().isoformat(),
+            "data": data
+        }
+        try:
+            _event_queues[run_id].put_nowait(event_data)
+        except asyncio.QueueFull:
+            pass  # Drop event if queue is full
+
+
+@router.get("/remote/run/{run_id}/stream")
+async def stream_remote_run(run_id: str):
+    """
+    Stream live logs for a remote test run via Server-Sent Events.
+    """
+    import json
+
+    if run_id not in _running_tests:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Create event queue for this run
+    if run_id not in _event_queues:
+        _event_queues[run_id] = asyncio.Queue(maxsize=100)
+
+    async def event_generator():
+        queue = _event_queues[run_id]
+
+        try:
+            while True:
+                try:
+                    # Wait for event with timeout
+                    event_data = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield {
+                        "event": event_data["type"],
+                        "data": json.dumps(event_data)
+                    }
+
+                    # Check if run completed
+                    if event_data["type"] == "run_completed":
+                        break
+
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield {"event": "keepalive", "data": "{}"}
+
+                    # Check if run is still active
+                    if run_id in _running_tests:
+                        status = _running_tests[run_id].get("status", "")
+                        if status in ("passed", "failed", "error", "cancelled"):
+                            break
+                    else:
+                        break
+
+        finally:
+            # Cleanup queue
+            if run_id in _event_queues:
+                del _event_queues[run_id]
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/remote/run/{run_id}")

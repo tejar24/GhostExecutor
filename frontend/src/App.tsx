@@ -29,10 +29,13 @@ function App() {
     selectedClient,
     runStatus,
     isRunning: isRemoteRunning,
+    logs: remoteLogs,
+    isStreaming: isRemoteStreaming,
     selectClient,
     refreshClients,
     runTest: runRemoteTest,
     stopTest: stopRemoteTest,
+    clearLogs: clearRemoteLogs,
   } = useRemoteClients();
 
   const isRunning = executionMode === 'local' ? isLocalRunning : isRemoteRunning;
@@ -166,6 +169,17 @@ function App() {
                     onRefresh={refreshClients}
                   />
                 </div>
+
+                {/* Remote Log Console */}
+                {selectedClient && (
+                  <div className="bg-ghost-surface rounded-lg border border-ghost-border p-4 flex-1 min-h-[400px]">
+                    <LogConsole
+                      logs={remoteLogs}
+                      isStreaming={isRemoteStreaming}
+                      onClear={clearRemoteLogs}
+                    />
+                  </div>
+                )}
 
                 {/* Remote execution info/instructions */}
                 {!selectedClient && (
