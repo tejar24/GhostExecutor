@@ -16,6 +16,7 @@ class Step:
     keyword: str  # Given, When, Then, And, But
     text: str
     line_number: int
+    data_table: List[List[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -63,6 +64,7 @@ class GherkinParser:
         lines = content.split("\n")
         feature = Feature(name="", file_path=file_path)
         current_scenario: Optional[Scenario] = None
+        current_step: Optional[Step] = None
         current_tags: List[str] = []
         in_feature_description = False
 
@@ -84,6 +86,7 @@ class GherkinParser:
                 feature.tags = current_tags
                 current_tags = []
                 in_feature_description = True
+                current_step = None
                 continue
 
             # Parse feature description (lines after Feature: before first Scenario)
@@ -108,6 +111,17 @@ class GherkinParser:
                     line_number=line_num
                 )
                 current_tags = []
+                current_step = None
+                continue
+
+            # Parse Data Tables
+            if stripped.startswith("|") and current_step:
+                # Split by pipe, remove empty start/end, strip whitespace
+                row = [cell.strip() for cell in stripped.split("|") if cell]
+                # If split returned nothing valid but line had pipes (e.g. "||"), treat as empty row or ignore
+                # Handles Standard Gherkin tables: | col1 | col2 |
+                if row:
+                   current_step.data_table.append(row)
                 continue
 
             # Parse Steps
@@ -121,6 +135,7 @@ class GherkinParser:
                     )
                     if current_scenario:
                         current_scenario.steps.append(step)
+                        current_step = step
                     break
 
         # Don't forget the last scenario

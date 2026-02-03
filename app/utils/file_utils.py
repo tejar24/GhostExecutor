@@ -4,12 +4,13 @@ File Utility Functions
 Provides common file operations for the Ghost-QC application.
 """
 
+import csv
 import glob
-import os
+import json
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 
 
 def ensure_directory(path: Union[str, Path]) -> Path:
@@ -79,6 +80,46 @@ def write_file(
         f.write(content)
 
     return file_path
+
+
+def load_data_file(path: Union[str, Path]) -> List[Dict[str, Any]]:
+    """
+    Load data from a JSON or CSV file.
+
+    Args:
+        path: Path to the data file.
+
+    Returns:
+        List of dictionaries containing the data.
+        For JSON: Expects a list of objects or a single object (returned as list of 1).
+        For CSV: Returns list of dicts keyed by header row.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"Data file not found: {path}")
+
+    suffix = file_path.suffix.lower()
+
+    if suffix == '.json':
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return [data]
+            elif isinstance(data, list):
+                return data
+            else:
+                raise ValueError(f"JSON file must contain an object or list of objects: {path}")
+
+    elif suffix == '.csv':
+        data = []
+        with open(file_path, 'r', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                data.append(row)
+        return data
+
+    else:
+        raise ValueError(f"Unsupported data file format: {suffix}. Use .json or .csv")
 
 
 def find_files(

@@ -59,6 +59,11 @@ class PageBrain:
 
 
 class UIBrain:
+    def get_fallback_selectors(self, raw: dict, classifier) -> list:
+        """Get fallback selectors for an element using the classifier."""
+        selectors = classifier.generate_selectors(raw)
+        # Exclude the highest-confidence selector (assumed primary)
+        return [s.selector for s in selectors[1:]] if len(selectors) > 1 else []
     """
     AI-driven DOM analysis engine that operates on DOM snapshots.
 
@@ -124,17 +129,7 @@ class UIBrain:
     DOM_EXTRACTION_SCRIPT = '''
     () => {
         const elements = [];
-        const interactiveSelectors = [
-            'input', 'textarea', 'select', 'button', 'a[href]',
-            '[role="button"]', '[role="link"]', '[role="checkbox"]',
-            '[role="radio"]', '[role="switch"]', '[role="tab"]',
-            '[role="menuitem"]', '[role="option"]', '[role="combobox"]',
-            '[role="textbox"]', '[role="searchbox"]', '[role="slider"]',
-            '[onclick]', '[ng-click]', '[v-on:click]', '[@click]',
-            '[data-action]', '[data-testid]', '[data-cy]',
-            'label', 'th[onclick]', 'td[onclick]',
-            '.btn', '.button', '[class*="clickable"]'
-        ].join(', ');
+        const interactiveSelectors = 'input, textarea, select, button, a, [role="button"], [role="checkbox"], [role="radio"]';
 
         const processedElements = new Set();
 
@@ -306,7 +301,7 @@ class UIBrain:
 
         return len(set(hashes)) == 1
 
-    def build_page_brain(self, browser) -> PageBrain:
+    def build_page_brain(self, browser, classifier=None) -> PageBrain:
         """
         Build complete UI Brain for current page state.
 
@@ -333,6 +328,9 @@ class UIBrain:
         for idx, raw_el in enumerate(raw_elements):
             element = self._classify_element(raw_el, idx)
             if element:
+                # Attach fallback selectors for executor use
+                if classifier:
+                    element.attributes['fallback_selectors'] = self.get_fallback_selectors(raw_el, classifier)
                 brain.elements.append(element)
 
         # Generate page signature

@@ -390,7 +390,7 @@ class AutonomousTestRunner:
                 if self.enable_detailed_logging:
                     self._step_logger.log_step_start(full_step, {})
 
-                execution_result = self._interpreter.execute_step(full_step)
+                execution_result = self._interpreter.execute_step(full_step, step_data=step)
                 duration_ms = (time.time() - start_time) * 1000
                 total_duration_ms += duration_ms
 

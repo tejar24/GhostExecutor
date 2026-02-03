@@ -15,4 +15,7 @@ pydantic>=2.0.0
 playwright>=1.40.0
 
 # SSE Streaming
-sse-starlette>=1.6.0
+sse_starlette>=1.6.0
+
+# Data Generation
+Faker>=21.0.0

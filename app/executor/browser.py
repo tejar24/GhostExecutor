@@ -23,6 +23,22 @@ class BrowserAction:
 
 
 class BrowserAutomation:
+    def verify_not_visible(self, selector: str, timeout: int = 5000) -> bool:
+        """Return True if the element is not visible (or not present)."""
+        try:
+            return not self.page.is_visible(selector, timeout=timeout)
+        except Exception:
+            return True  # If not found, treat as not visible
+
+    def handle_action(self, action: str, selector: str, value: str = None, **kwargs):
+        """Dispatch actions including verify_not_visible for test steps."""
+        if action == "verify_not_visible":
+            result = self.verify_not_visible(selector)
+            if not result:
+                raise AssertionError(f"Element {selector} is visible but should not be.")
+            return {"success": True, "action": action, "selector": selector}
+        # ...existing action handlers...
+        return {"success": False, "action": action, "selector": selector, "error": f"Unknown action type: {action}"}
     """
     Playwright-based browser automation for test execution.
     Provides high-level actions that AI can invoke.
@@ -75,21 +91,61 @@ class BrowserAutomation:
         except Exception as e:
             return BrowserAction(success=False, action="navigate", value=url, error=str(e))
 
-    def click(self, selector: str) -> BrowserAction:
-        """Click an element."""
-        try:
-            self.page.click(selector, timeout=10000)
-            return BrowserAction(success=True, action="click", selector=selector)
-        except Exception as e:
-            return BrowserAction(success=False, action="click", selector=selector, error=str(e))
+    def click(self, selector: str, fallback_selectors: list = None, debug: bool = False) -> BrowserAction:
+        """Click an element, trying fallback selectors if needed. Optionally capture debug info on failure."""
+        selectors_to_try = [selector] + (fallback_selectors or [])
+        last_error = None
+        for sel in selectors_to_try:
+            try:
+                self.page.click(sel, timeout=10000)
+                return BrowserAction(success=True, action="click", selector=sel)
+            except Exception as e:
+                last_error = str(e)
+                if debug:
+                    self._log_debug_failure('click', sel, last_error)
+        if debug:
+            self._capture_debug_state('click', selector, last_error)
+        return BrowserAction(success=False, action="click", selector=selector, error=last_error)
 
-    def fill(self, selector: str, value: str) -> BrowserAction:
-        """Fill a text input."""
+    def fill(self, selector: str, value: str, fallback_selectors: list = None, debug: bool = False) -> BrowserAction:
+        """Fill a text input, trying fallback selectors if needed. Optionally capture debug info on failure."""
+        selectors_to_try = [selector] + (fallback_selectors or [])
+        last_error = None
+        for sel in selectors_to_try:
+            try:
+                self.page.fill(sel, value, timeout=10000)
+                return BrowserAction(success=True, action="fill", selector=sel, value=value)
+            except Exception as e:
+                last_error = str(e)
+                if debug:
+                    self._log_debug_failure('fill', sel, last_error)
+        if debug:
+            self._capture_debug_state('fill', selector, last_error)
+        return BrowserAction(success=False, action="fill", selector=selector, value=value, error=last_error)
+    def _log_debug_failure(self, action: str, selector: str, error: str):
+        print(f"[DEBUG] Action '{action}' failed for selector '{selector}': {error}")
+
+    def _capture_debug_state(self, action: str, selector: str, error: str):
+        # Save screenshot and DOM snapshot for debugging
         try:
-            self.page.fill(selector, value, timeout=10000)
-            return BrowserAction(success=True, action="fill", selector=selector, value=value)
+            screenshot = self.take_screenshot()
+            dom = self.get_page_content()
+            with open(f'debug_{action}_{selector.replace("/", "_")}.png', 'wb') as f:
+                import base64
+                f.write(base64.b64decode(screenshot))
+            with open(f'debug_{action}_{selector.replace("/", "_")}.html', 'w', encoding='utf-8') as f:
+                f.write(dom)
+            print(f"[DEBUG] Captured screenshot and DOM for failed action '{action}' on selector '{selector}'")
         except Exception as e:
-            return BrowserAction(success=False, action="fill", selector=selector, error=str(e))
+            print(f"[DEBUG] Failed to capture debug state: {e}")
+    def try_action_with_fallbacks(self, action: str, selector: str, value: str = None, fallback_selectors: list = None, debug: bool = False) -> BrowserAction:
+        """Generalized method to try an action with fallback selectors."""
+        if action == 'click':
+            return self.click(selector, fallback_selectors, debug)
+        elif action == 'fill':
+            return self.fill(selector, value, fallback_selectors, debug)
+        # Extend for other actions as needed
+        return BrowserAction(success=False, action=action, selector=selector, error='Unsupported action')
 
     def type_text(self, selector: str, value: str) -> BrowserAction:
         """Type text character by character (for inputs that don't work with fill)."""

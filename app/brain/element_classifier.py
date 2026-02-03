@@ -20,6 +20,12 @@ class SelectorCandidate:
 
 
 class ElementClassifier:
+    # Allow extension for custom frameworks/components
+    CUSTOM_PATTERNS = {}
+
+    def extend_framework_patterns(self, name: str, patterns: dict):
+        self.FRAMEWORK_PATTERNS[name] = patterns
+        self.CUSTOM_PATTERNS[name] = patterns
     """
     Intelligent element classifier that generates robust selectors
     and provides self-healing capabilities.
@@ -315,7 +321,7 @@ class ElementClassifier:
             "is_required": raw.get("required", False)
         }
 
-    def generate_selectors(self, raw: Dict[str, Any]) -> List[SelectorCandidate]:
+    def generate_selectors(self, raw: Dict[str, Any], include_structural: bool = True) -> List[SelectorCandidate]:
         """
         Generate ranked list of selector candidates.
 
@@ -446,14 +452,15 @@ class ElementClassifier:
                 ))
 
         # Strategy 10: XPath-like structural selector
-        path = raw.get("path", "")
-        if path:
-            candidates.append(SelectorCandidate(
-                selector=path,
-                strategy="structural_path",
-                confidence=0.50,
-                is_unique=True
-            ))
+        if include_structural:
+            path = raw.get("path", "")
+            if path:
+                candidates.append(SelectorCandidate(
+                    selector=path,
+                    strategy="structural_path",
+                    confidence=0.50,
+                    is_unique=True
+                ))
 
         # Sort by confidence
         candidates.sort(key=lambda c: c.confidence, reverse=True)

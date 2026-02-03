@@ -7,14 +7,19 @@ This is the intelligence layer that enables autonomous test execution.
 
 import json
 import re
+import time
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, TYPE_CHECKING, Callable
 from app.ai.engine import run_ai
 from app.executor.browser import BrowserAutomation, BrowserAction
 from app.brain.ui_brain import UIBrain, ElementDescriptor
+from app.ai.prompts import INTERPRETATION_PROMPT, ELEMENT_FINDER_PROMPT
+from app.utils.data_generator import DataGenerator
+from app.config import get_config
 
 if TYPE_CHECKING:
     from app.executor.step_logger import StepLogger
+    from app.executor.parser import Step
 
 
 @dataclass
@@ -35,80 +40,6 @@ class StepInterpreter:
     AI-powered interpreter that converts Gherkin steps into executable actions.
     """
 
-    INTERPRETATION_PROMPT = '''You are an expert test automation engineer. Analyze the Gherkin step and page context to determine the exact browser action needed.
-
-CURRENT PAGE STATE:
-- URL: {current_url}
-- Title: {page_title}
-- Visible Elements Summary: {elements_summary}
-
-GHERKIN STEP TO EXECUTE:
-"{step_text}"
-
-PREVIOUS STEPS IN THIS SCENARIO:
-{previous_steps}
-
-Respond with a JSON object containing the action to perform. Choose ONE action type:
-
-For NAVIGATION:
-{{"action": "navigate", "url": "<full_url>"}}
-
-For CLICKING:
-{{"action": "click", "selector": "<css_or_text_selector>", "description": "<what_we_are_clicking>"}}
-
-For FILLING TEXT:
-{{"action": "fill", "selector": "<input_selector>", "value": "<text_to_enter>"}}
-
-For SELECTING DROPDOWN:
-{{"action": "select", "selector": "<select_selector>", "value": "<option_value>"}}
-
-For VERIFICATION (element visible):
-{{"action": "verify_visible", "selector": "<element_selector>", "description": "<what_should_be_visible>"}}
-
-For VERIFICATION (text contains):
-{{"action": "verify_text", "selector": "<element_selector>", "expected_text": "<expected_text>"}}
-
-For VERIFICATION (URL contains):
-{{"action": "verify_url", "expected_pattern": "<url_pattern>"}}
-
-For VERIFICATION (element exists):
-{{"action": "verify_exists", "selector": "<element_selector>"}}
-
-For WAITING (for element):
-{{"action": "wait", "selector": "<element_to_wait_for>", "timeout": <milliseconds>}}
-
-For WAITING (for time/seconds):
-{{"action": "wait_time", "seconds": <number_of_seconds>}}
-
-For CHECKBOX:
-{{"action": "check", "selector": "<checkbox_selector>"}} or {{"action": "uncheck", "selector": "<checkbox_selector>"}}
-
-For KEYBOARD:
-{{"action": "press_key", "key": "<key_name>"}}
-
-SELECTOR TIPS:
-- IMPORTANT: For buttons with aria-label, ALWAYS use: button[aria-label="exact label"] (e.g., button[aria-label="Edit"])
-- For icon buttons in tables, use aria-label to distinguish: button[aria-label="Edit"] NOT button[aria-label="View Details"]
-- Prefer text-based selectors: text="Login" or button:has-text("Submit")
-- Use role selectors: role=button[name="Login"]
-- Use placeholder: [placeholder="Email"]
-- Use label: label:has-text("Email") >> input
-- Use test IDs if visible: [data-testid="login-btn"]
-- Fallback to CSS: #id, .class, input[type="email"]
-- For "first" row in table: .MuiDataGrid-row:first-child button[aria-label="Edit"]
-
-IMPORTANT: When the step mentions "Edit" icon/button, use button[aria-label="Edit"], NOT button[aria-label="View Details"].
-
-Respond with ONLY the JSON object, no explanations.'''
-
-    ELEMENT_FINDER_PROMPT = '''Analyze this page HTML to find the best selector for: "{target_description}"
-
-PAGE HTML (truncated):
-{html_snippet}
-
-Return ONLY a JSON object:
-{{"selector": "<best_css_or_text_selector>", "confidence": <0.0-1.0>}}'''
-
     def __init__(
         self,
         browser: BrowserAutomation,
@@ -119,17 +50,39 @@ Return ONLY a JSON object:
         self.step_history: List[str] = []
         self.enable_auto_healing = enable_auto_healing
         self.step_logger = step_logger
+        self.config = get_config()
 
         # Initialize UI Brain for auto-healing
         self._ui_brain: Optional[UIBrain] = None
         if enable_auto_healing:
             self._ui_brain = UIBrain()
+        
+        # Initialize Data Generator
+        self._data_generator = DataGenerator()
 
         # Track healing statistics
         self._healing_stats = {
             "attempts": 0,
             "successes": 0,
             "methods_used": {}
+        }
+        
+        # Initialize action handlers
+        self._action_handlers: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+            "navigate": self._handle_navigate,
+            "click": self._handle_click,
+            "fill": self._handle_fill,
+            "select": self._handle_select,
+            "verify_visible": self._handle_verify_visible,
+            "verify_not_visible": self._handle_verify_not_visible,
+            "verify_text": self._handle_verify_text,
+            "verify_url": self._handle_verify_url,
+            "verify_exists": self._handle_verify_exists,
+            "wait": self._handle_wait,
+            "wait_time": self._handle_wait_time,
+            "check": self._handle_check,
+            "uncheck": self._handle_uncheck,
+            "press_key": self._handle_press_key,
         }
 
     def interpret_step(self, step_text: str) -> Dict[str, Any]:
@@ -142,7 +95,7 @@ Return ONLY a JSON object:
         elements_summary = self._get_elements_summary()
 
         # Build prompt with context
-        prompt = self.INTERPRETATION_PROMPT.format(
+        prompt = INTERPRETATION_PROMPT.format(
             current_url=current_url,
             page_title=page_title,
             elements_summary=elements_summary,
@@ -161,20 +114,31 @@ Return ONLY a JSON object:
 
         return action
 
-    def execute_step(self, step_text: str) -> Dict[str, Any]:
+    def execute_step(self, step_text: str, step_data: Optional["Step"] = None) -> Dict[str, Any]:
         """
         Interpret and execute a Gherkin step.
         Returns execution result with status and details.
+        
+        Args:
+            step_text: The full text of the step.
+            step_data: The full Step object, containing data_table if any.
         """
         result = {
             "step": step_text,
             "success": False,
             "action": None,
             "error": None,
-            "screenshot": None
+            "screenshot": None,
+            "sub_steps": []
         }
 
         try:
+            # 1. Handle Auto-Generation Steps
+            # Detect: "I auto-fill the form" or "I populate the form with random data"
+            if "auto-fill" in step_text.lower() or "populate" in step_text.lower():
+                return self._handle_auto_generate(result)
+
+            # 2. Standard AI Interpretation
             # Get AI interpretation
             action = self.interpret_step(step_text)
             result["action"] = action
@@ -185,98 +149,11 @@ Return ONLY a JSON object:
 
             # Execute based on action type
             action_type = action.get("action", "")
-
-            if action_type == "navigate":
-                browser_result = self.browser.navigate(action.get("url", ""))
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "click":
-                selector = action.get("selector", "")
-                description = action.get("description", "")
-                # Try to find element, with fallback and auto-healing
-                browser_result = self._execute_click(selector, description=description)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "fill":
-                selector = action.get("selector", "")
-                value = action.get("value", "")
-                # Try smart fill first
-                browser_result = self.browser.fill_smart(selector, value)
-                if not browser_result.success and self.enable_auto_healing:
-                    # Try auto-healing
-                    browser_result = self._execute_with_healing("fill", selector, value=value)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "select":
-                selector = action.get("selector", "")
-                value = action.get("value", "")
-                browser_result = self.browser.select_option(selector, value)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "verify_visible":
-                selector = action.get("selector", "")
-                is_visible = self.browser.is_visible(selector)
-                result["success"] = is_visible
-                if not is_visible:
-                    result["error"] = f"Element not visible: {selector}"
-
-            elif action_type == "verify_text":
-                selector = action.get("selector", "")
-                expected = action.get("expected_text", "")
-                actual = self.browser.get_text(selector) or ""
-                result["success"] = expected.lower() in actual.lower()
-                if not result["success"]:
-                    result["error"] = f"Text mismatch. Expected '{expected}' in '{actual}'"
-
-            elif action_type == "verify_url":
-                expected = action.get("expected_pattern", "")
-                actual = self.browser.get_current_url()
-                result["success"] = expected.lower() in actual.lower()
-                if not result["success"]:
-                    result["error"] = f"URL mismatch. Expected '{expected}' in '{actual}'"
-
-            elif action_type == "verify_exists":
-                selector = action.get("selector", "")
-                elements = self.browser.find_elements(selector)
-                result["success"] = len(elements) > 0
-                if not result["success"]:
-                    result["error"] = f"Element not found: {selector}"
-
-            elif action_type == "wait":
-                selector = action.get("selector", "")
-                timeout = action.get("timeout", 10000)
-                browser_result = self.browser.wait_for_selector(selector, timeout)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "wait_time":
-                import time
-                seconds = action.get("seconds", 1)
-                time.sleep(float(seconds))
-                result["success"] = True
-
-            elif action_type == "check":
-                selector = action.get("selector", "")
-                browser_result = self.browser.check(selector)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "uncheck":
-                selector = action.get("selector", "")
-                browser_result = self.browser.uncheck(selector)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
-            elif action_type == "press_key":
-                key = action.get("key", "")
-                browser_result = self.browser.press_key(key)
-                result["success"] = browser_result.success
-                result["error"] = browser_result.error
-
+            
+            handler = self._action_handlers.get(action_type)
+            if handler:
+                handler_result = handler(action)
+                result.update(handler_result)
             else:
                 result["error"] = f"Unknown action type: {action_type}"
 
@@ -291,6 +168,180 @@ Return ONLY a JSON object:
                 pass
 
         return result
+
+    # --- Dynamic Data Handling ---
+
+    def _handle_auto_generate(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Automatically generate data and fill the form using UI Brain."""
+        if not self._ui_brain:
+             result["error"] = "UI Brain required for auto-generation"
+             return result
+
+        # Ensure we have the latest DOM state
+        try:
+             # Wait for page to be ready
+            self.browser._page.wait_for_load_state("domcontentloaded")
+            time.sleep(1) # Extra buffer for dynamic frameworks
+            self._ui_brain.build_page_brain(self.browser)
+        except Exception:
+            pass
+        
+        # Get all actionable elements (visible + enabled)
+        elements = self._ui_brain.get_actionable_elements()
+        
+        filled_count = 0
+        errors = []
+        
+        for element in elements:
+            action_res = None
+            
+            # Skip submit buttons or navigation links during population
+            if element.element_type in ["button", "link", "submit_button"]:
+                continue
+            
+            # Generate Value
+            generated_value = self._data_generator.generate_value(element)
+            
+            # Perform Action
+            try:
+                if element.element_type == "input" and element.element_subtype in ["text", "email", "password", "tel", "url", "number", "search", "date"]:
+                    action_res = self.browser.fill(element.logical_selector, generated_value)
+                
+                elif element.element_type == "textarea":
+                    action_res = self.browser.fill(element.logical_selector, generated_value)
+                    
+                elif element.element_type == "select":
+                    # For select, we need valid options. This is tricky. 
+                    # For now, we might skip or try to select the first option if we knew it.
+                    # As a fallback, we can try to select by index if supported, or just ignore.
+                    # Ideally UIBrain would provide options.
+                    pass 
+                
+                elif element.element_type == "input" and element.element_subtype == "checkbox":
+                     # Randomly check/uncheck
+                    check = self._data_generator.faker.boolean()
+                    if check:
+                        action_res = self.browser.check(element.logical_selector)
+                    else:
+                        action_res = self.browser.uncheck(element.logical_selector)
+
+                
+                if action_res and action_res.success:
+                    filled_count += 1
+                    # Log what we filled for clarity
+                    result["sub_steps"].append({
+                        "label": element.resolved_label or element.logical_selector,
+                        "value": generated_value,
+                        "success": True
+                    })
+                elif action_res and not action_res.success:
+                    errors.append(f"Failed to fill {element.logical_selector}: {action_res.error}")
+
+            except Exception as e:
+                errors.append(f"Error processing {element.logical_selector}: {str(e)}")
+
+        if filled_count == 0:
+            result["success"] = False
+            result["error"] = "No fillable fields found on the page."
+            return result
+        
+        result["success"] = True
+        result["action"] = {"action": "auto_fill", "fields_filled": filled_count}
+        if errors:
+            result["warning"] = "; ".join(errors)
+            
+        return result
+
+    # --- Action Handlers ---
+
+    def _handle_navigate(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        browser_result = self.browser.navigate(action.get("url", ""))
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_click(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        description = action.get("description", "")
+        # Try to find element, with fallback and auto-healing
+        browser_result = self._execute_click(selector, description=description)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_fill(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        value = action.get("value", "")
+        # Try smart fill first
+        browser_result = self.browser.fill_smart(selector, value)
+        if not browser_result.success and self.enable_auto_healing:
+            # Try auto-healing
+            browser_result = self._execute_with_healing("fill", selector, value=value)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_select(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        value = action.get("value", "")
+        browser_result = self.browser.select_option(selector, value)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_verify_visible(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        is_visible = self.browser.is_visible(selector)
+        error = None if is_visible else f"Element not visible: {selector}"
+        return {"success": is_visible, "error": error}
+
+    def _handle_verify_not_visible(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        not_visible = self.browser.verify_not_visible(selector)
+        error = None if not_visible else f"Element is visible but should not be: {selector}"
+        return {"success": not_visible, "error": error}
+
+    def _handle_verify_text(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        expected = action.get("expected_text", "")
+        actual = self.browser.get_text(selector) or ""
+        success = expected.lower() in actual.lower()
+        error = None if success else f"Text mismatch. Expected '{expected}' in '{actual}'"
+        return {"success": success, "error": error}
+
+    def _handle_verify_url(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        expected = action.get("expected_pattern", "")
+        actual = self.browser.get_current_url()
+        success = expected.lower() in actual.lower()
+        error = None if success else f"URL mismatch. Expected '{expected}' in '{actual}'"
+        return {"success": success, "error": error}
+
+    def _handle_verify_exists(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        elements = self.browser.find_elements(selector)
+        success = len(elements) > 0
+        error = None if success else f"Element not found: {selector}"
+        return {"success": success, "error": error}
+
+    def _handle_wait(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        timeout = action.get("timeout", 10000)
+        browser_result = self.browser.wait_for_selector(selector, timeout)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_wait_time(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        seconds = action.get("seconds", 1)
+        time.sleep(float(seconds))
+        return {"success": True, "error": None}
+
+    def _handle_check(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        browser_result = self.browser.check(selector)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_uncheck(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        selector = action.get("selector", "")
+        browser_result = self.browser.uncheck(selector)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    def _handle_press_key(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        key = action.get("key", "")
+        browser_result = self.browser.press_key(key)
+        return {"success": browser_result.success, "error": browser_result.error}
+
+    # --- Helper methods ---
 
     def _execute_click(self, selector: str, description: str = None) -> BrowserAction:
         """Execute click with smart retries, auto-healing, and selector alternatives."""
